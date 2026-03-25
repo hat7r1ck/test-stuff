@@ -1,0 +1,311 @@
+<html>
+  <div style="padding:12px 16px; background-color:#1a1a1a; border-left:4px solid #006d9c; border-radius:4px; overflow:hidden;">
+    <span style="float:right; margin-left:16px; display:flex; gap:8px; align-items:center;">
+      <a href="CONFLUENCE_DOC_URL"
+         style="background-color:#444; color:#ffffff; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        Docs
+      </a>
+      <a href="JIRA_INTAKE_URL"
+         style="background-color:#444; color:#ffffff; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        Jira Intake
+      </a>
+      <a href="https://es-wf-sp.splunkcloud.com/en-US/app/wf-ctfc-content/SCD_Exclusion_List_Input"
+         style="background-color:#f8be34; color:#1a1a1a; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        SCD KV Input
+      </a>
+      <a href="https://es-wf-sp.splunkcloud.com/en-US/app/wf-ctfc-content/CTFC_Exclusion_List_Review_Tracker"
+         style="background-color:#006d9c; color:#ffffff; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        Refresh
+      </a>
+    </span>
+    <p style="color:#cccccc; margin:0; font-size:0.9em;">
+      <strong style="color:#ffffff;">Engineers:</strong> Select role, pick action. For Bulk: type filter, Apply Filter, set determination, then Confirm.
+      <span style="margin-left:24px;"></span>
+      <strong style="color:#f8be34;">Strat:</strong> Select Strategist, click a row in the Awaiting Approval table, then select Confirm dropdown to submit your decision.
+    </p>
+  </div>
+</html>
+
+
+Three mermaid charts first, then the HTML widget below.
+
+**Engineer chart:**
+```
+flowchart TD
+    A([Start of rotation]) --> B{Ticket assigned?}
+    B -- No --> C[Create Jira\nExclusion List Review YYYY-Www]
+    B -- Yes --> D[Open dashboard\nRole = Engineer]
+    C --> D
+    D --> E[Review expiring entries\nCheck traffic + notables]
+    E --> F[Set determination\nBulk or Single Entry]
+    F --> G{All entries done?}
+    G -- No --> E
+    G -- Yes --> H[Switch to Submit Week to Strat\nEnter Jira ticket, Confirm]
+    H --> I([Awaiting Strat approval])
+```
+
+**Jira / automation chart:**
+```
+flowchart TD
+    A([Engineer submits]) --> B[Peer Review sub-task\nauto-created in Jira]
+    B --> C[Engineer completes\npeer review, closes sub-task]
+    C --> D[Strat review sub-task\nauto-created]
+    D --> E{Strat decision}
+    E -- Done --> F[Jira ticket moves to Done]
+    E -- Cancel --> G[Pushed back to engineer\nwith notes]
+    G --> A
+    F --> H([Engineer applies to KV store])
+```
+
+**Strat chart:**
+```
+flowchart TD
+    A([Notification received]) --> B[Open dashboard\nRole = Strategist]
+    B --> C[Click week row\nin approval queue]
+    C --> D[Review entries\ndeterminations and notes]
+    D --> E{Decision}
+    E -- Approve --> F[Select Approved\nConfirm in dashboard]
+    E -- Deny --> G[Select Denied\nAdd notes\nConfirm in dashboard]
+    F --> H[Jira ticket closes\nvia automation]
+    G --> I([Returns to engineer\nfor revision])
+    H --> J([Engineer applies to KV store\nthen creates handoff ticket])
+```
+
+
+# CTFC Exclusion List Review Process
+
+---
+
+## How to Access the Dashboard
+
+Go to **Splunk Cloud > WF | CTFC - Content > CTFC Exclusion List Review.**
+
+There are two ways to get there:
+
+**Option 1 (easiest):**
+1. Navigate to Splunk Cloud: `https://es-wf-sp.splunkcloud.com`
+2. Select **Apps > WF | CTFC - Content** from the top menu
+3. Find **CTFC Exclusion List Review** in the app navigation bar at the top
+
+**Option 2 (if you can't find it in the nav bar):**
+1. Select **Settings > User Interface > Views**
+2. Filter by name: type `CTFC_Exclusion`
+3. Select **Open** in the Actions row next to the dashboard
+
+Once the dashboard loads, you will see the Role dropdown and the KPI panels. Nothing else appears until you select a role. There is no Submit button on the main page -- submissions happen inside each action.
+
+---
+
+## How the Dashboard Works
+
+A saved search called `exclusion_bulk_risk_check` runs every Monday at 00:00 UTC. It pulls all active entries expiring within 30 days, checks `index=risk` for hit counts (30-day and 90-day), finds the last time each IoC appeared in risk events, and caches the results.
+
+When you open the dashboard, it loads from that cache. No live queries run against the KV store or risk index on load.
+
+**If the dashboard is empty**, the saved search may not have completed yet:
+1. Go to **Activity > Search Jobs**
+2. Set the filter to **All Users**
+3. Look for a job with `exclusion_bulk_risk_check` in the name
+4. If it shows **Done** with a non-zero result count, the cache is populated -- refresh the dashboard
+5. If the job is not listed, the search has not run yet or needs to be triggered manually. Contact the engineer on rotation.
+6. If the job shows **Done** but result count is zero: this means either no entries are expiring within 30 days (unlikely but possible), or the search failed silently. Before assuming nothing needs to be done, verify directly in the KV store. If the KV store has active entries expiring soon and the job still shows zero, contact the engineer on rotation.
+
+---
+
+## Known Behavior: Risky Command Prompt
+
+Splunk Cloud shows a security warning every time a search writes to a CSV lookup using `outputlookup`. This is a platform-level policy and cannot be turned off from the dashboard side.
+
+What happens on every write:
+1. You select **Confirm** from the dropdown
+2. Splunk shows a dialog about the search containing a risky command
+3. Click **Run Anyway**
+4. Select **Confirm** from the dropdown a second time (the first selection was consumed by the popup)
+
+Every write action in this dashboard follows that pattern: Confirm, Run Anyway, Confirm again. Nothing is lost or duplicated by confirming twice.
+
+> **Info:** A request to exempt this dashboard from the prompt has been submitted to the platform team. Until that goes through, this is the expected behavior. CTFCSE-8470 Splunk | Risky command exemption request - outputlookup - wf-ctfc-content
+
+---
+
+## Traffic Flag Values
+
+| Flag | What it tells you | What to do |
+|---|---|---|
+| ACTIVE | The IoC hit risk events within the last 90 days | Recommend extend |
+| Validate in Notables / Jira | Zero matching risk events in 90 days | Check Mission Control notables and the Jira ticket before deciding |
+
+> "Validate in Notables / Jira" does not mean the entry is inactive. It means the risk index had no hits for that specific rule and IoC combination. The entry could still be doing work elsewhere. Verify before you disable anything.
+
+---
+
+## Splunk Cloud: Engineer Workflow
+
+### Step 1: Access the Dashboard and Select Role
+
+Navigate to the dashboard using either option above. Once loaded:
+
+- Set the **Role** dropdown to **Engineer**
+- The Current Week, Data Last Refreshed, and all KPI panels are visible immediately
+- The Action dropdown and review table appear after you select Engineer
+
+### Step 2: Pick a Review Method
+
+Use the **Action** dropdown to choose how you want to work:
+
+| Action | When to use it |
+|---|---|
+| Bulk Review | Multiple entries under the same rule all get the same determination |
+| Single Entry Review | An entry needs its own determination or different notes |
+| Submit Week to Strat | You are done reviewing and ready to hand off for approval |
+
+### Step 3: Review Entries
+
+The dashboard shows all entries expiring within 7 days. Each row contains:
+
+| Column | Description |
+|---|---|
+| IoC Value | The suppressed value |
+| Content | The correlation rule associated with this entry |
+| Expires | Date the entry expires |
+| Traffic | ACTIVE or Validate in Notables / Jira |
+| 30d Hits | Times the IoC appeared in risk events in the last 30 days |
+| 90d Hits | Times the IoC appeared in risk events in the last 90 days |
+| Last Seen | Most recent date the IoC was seen in risk events |
+| Owner | Team that owns the correlation rule |
+
+**How to decide:**
+
+1. **Traffic = ACTIVE:** It is suppressing events right now. Extend it.
+2. **Traffic = Validate in Notables / Jira with 0 hits across both windows:**
+   - Go to Mission Control and look at the notables for this rule
+   - Open the Jira ticket on the entry
+   - Open the CTFC procedure guide for the rule to see if there is any traffic
+   - Notable still active and relevant: **extend**
+   - Notable closed and no activity in 90 days: **disable**
+3. **Owner is not CTFC:** Contact the owning team. Get their determination. Write their response in your notes before submitting.
+
+> **Info:** CTFC does not own notables. The team that created the rule owns them. If SCD is listed as the owner, check the SCD ticket on the entry to find the actual owning team.
+
+### Step 4: Submit Determinations
+
+**Bulk Review**
+1. Type part of the rule name into the **Content filter** (or leave * for everything)
+2. From the **Apply Filter** dropdown, select **Apply Filter** -- this reveals the Determination and Notes fields
+3. Pick a determination from the **Determination** dropdown
+4. Add your notes (ticket number, reason, or N/A)
+5. Select **Confirm** from the **Confirm Bulk Submit** dropdown
+6. If a risky command prompt appears, click **Run Anyway**, then select **Confirm** again
+
+**Single Entry Review**
+1. Click any row in the review table
+2. The entry details populate in the fields above the table
+3. Pick a determination and add notes
+4. Select **Confirm** from the **Confirm Entry Submit** dropdown
+5. If a risky command prompt appears, click **Run Anyway**, then select **Confirm** again
+
+**Determination Options**
+
+| Option | When to use it |
+|---|---|
+| Extend - 1 year | Active or still needed. No reason to re-review soon. |
+| Extend - 6 months | Active but worth checking again sooner. |
+| Extend - 3 months | Borderline. Short extension while you gather more information. |
+| Disable - no activity | No hits, no active notables, no reason to keep it. |
+| Disable - no longer needed | The original issue was resolved or the entry was temporary. |
+| Modify - scope change needed | The rule association, IoC value, or scope needs updating before extending. |
+
+Notes are required for everything except Extend - 1 year. Strat will see your notes.
+
+### Step 5: Submit the Week to Strat
+
+Once every entry for the week has a determination, switch the Action dropdown to **Submit Week to Strat**.
+
+Before submitting, create (if not already done) a Jira ticket through the Engineer Intake / Submit Ideas process. Include:
+- Every rule that is up for expiry
+- Your recommendation for each (extend or disable)
+- Your rationale (traffic data, Jira history, owner follow-up, case count)
+
+Then:
+1. Review the table showing your determinations for the week
+2. Enter the Jira ticket number (e.g. CTFCSE-1234)
+3. Select **Confirm** from the **Confirm Submit to Strat** dropdown
+4. If a risky command prompt appears, click **Run Anyway**, then select **Confirm** again
+
+The week moves to pending Strat approval. The Jira ticket number is written to every entry for that week.
+
+---
+
+## Splunk Cloud: Strategist Workflow
+
+Open the same dashboard and set the **Role** dropdown to **Strategist (Strat)**.
+
+1. Click the row for the week you need to review in the approval queue
+2. All entries load below with the engineer's determinations, notes, traffic data, and Jira ticket
+3. Pick **Approved** or **Denied** from the **Decision** dropdown
+4. Add notes (required if denying)
+5. Select **Confirm** from the **Confirm Decision** dropdown
+6. If a risky command prompt appears, click **Run Anyway**, then select **Confirm** again
+
+**Approved:** The engineer inputs the approved exclusions into the KV store using the SCD Exclusion List Input dashboard, once the Jira ticket has closed via automation.
+
+**Denied:** The week goes back to the engineer with your notes. The engineer addresses the issues, updates determinations if needed, and resubmits.
+
+---
+
+## Decision History
+
+The Decision History panel at the bottom of the dashboard shows every past Strat decision. Approved and denied weeks are both shown with the entry count, who decided, when, and any notes. This panel is visible to all roles and updates automatically.
+
+---
+
+## End-to-End Process Flow
+
+### Engineer
+1. Confirm a Jira ticket is assigned for the current rotation week (naming convention: Exclusion List Review YYYY-Www). Create one if not already assigned.
+2. Open the dashboard, set Role to Engineer
+3. Review all entries expiring this week -- check traffic flag, notables, and owner
+4. Set determinations using Bulk Review or Single Entry Review
+5. Switch to Submit Week to Strat, enter the Jira ticket number, and Confirm
+
+### Jira / Automation
+1. Peer Review sub-task is auto-created under the ticket
+2. Engineer completes the peer review sub-task and closes it
+3. Strat / Manager review sub-task is auto-created
+4. Strat approves (Done) or cancels (back to engineer with notes)
+
+### Strat
+1. Open the dashboard, set Role to Strategist
+2. Click the week row in the approval queue
+3. Review the engineer's determinations and notes
+4. Select Approved or Denied from the Decision dropdown and Confirm
+5. If denied, add notes explaining what needs to change -- the week returns to the engineer
+
+### After Approval
+1. Engineer opens the **SCD Exclusion List Input** dashboard
+2. Applies each approved entry to the KV store manually
+3. Jira ticket closes via automation
+4. Engineer creates a new Jira ticket for the next rotation engineer
+5. Add any carry-over notes to the new ticket -- entries not yet actioned, pending owner responses, or items that need follow-up next cycle
+
+> The manual KV store step is a known limitation while this process is in initial rollout. It will be evaluated for automation after the first full cycle.
+
+---
+
+## Backup: Review History Query
+
+To check the status of past weeks outside the dashboard:
+
+```spl
+| inputlookup exclusion_review_tracker.csv
+| stats
+    count as total_entries,
+    count(eval(determination!="" AND determination!="Needs follow-up")) as reviewed,
+    count(eval(strat_status="approved")) as approved,
+    count(eval(strat_status="denied")) as denied,
+    count(eval(strat_status="pending_strat")) as pending_strat,
+    values(jira_ticket) as jira_tickets,
+    values(strat_updated_by) as strat_reviewer
+    by iso_week
+| sort - iso_week
+```
