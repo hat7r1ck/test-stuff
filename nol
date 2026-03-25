@@ -1,0 +1,214 @@
+Init Block (add before </init>)
+xml
+    <!-- Zero-entry week -->
+    <unset token="show_zero_week"></unset>
+    <unset token="zero_week_eligible"></unset>
+    <unset token="zero_week_fire"></unset>
+Header HTML (replace your existing header panel content)
+xml
+<html>
+  <div style="padding:12px 16px; background-color:#1a1a1a; border-left:4px solid #006d9c; border-radius:4px; overflow:hidden;">
+    <span style="float:right; margin-left:16px; display:flex; gap:8px; align-items:center;">
+      <a href="CONFLUENCE_DOC_URL"
+         style="background-color:#444; color:#ffffff; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        Docs
+      </a>
+      <a href="JIRA_INTAKE_URL"
+         style="background-color:#444; color:#ffffff; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        Jira Intake
+      </a>
+      <a href="https://es-wf-sp.splunkcloud.com/en-US/app/wf-ctfc-content/SCD_Exclusion_List_Input"
+         style="background-color:#f8be34; color:#1a1a1a; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        SCD KV Input
+      </a>
+      <a href="https://es-wf-sp.splunkcloud.com/en-US/app/wf-ctfc-content/CTFC_Exclusion_List_Review_Tracker"
+         style="background-color:#006d9c; color:#ffffff; padding:4px 12px; border-radius:3px; text-decoration:none; font-size:0.85em; font-weight:bold;">
+        Refresh
+      </a>
+    </span>
+    <p style="color:#cccccc; margin:0; font-size:0.9em;">
+      <strong style="color:#ffffff;">Engineers:</strong> Select role, pick action. For Bulk: type filter, Apply Filter, set determination, then Confirm.
+      <span style="margin-left:24px;"></span>
+      <strong style="color:#f8be34;">Strat:</strong> Select Strategist, click a row in the Awaiting Approval table, then select Confirm dropdown to submit your decision.
+    </p>
+  </div>
+</html>
+Background Searches (after </fieldset>, before <search id="base_expiring">)
+xml
+  <search id="zero_week_check">
+    <query>| makeresults
+| eval iso_week=strftime(now(), "%G-W%V")
+| join type=left iso_week
+    [| inputlookup exclusion_review_tracker.csv
+     | where iso_week=strftime(now(), "%G-W%V")
+     | stats count as already_logged by iso_week]
+| eval already_logged=coalesce(already_logged, 0)
+| where already_logged=0</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <condition match="$job.resultCount$ &gt; 0">
+        <set token="zero_week_eligible">1</set>
+      </condition>
+      <condition match="$job.resultCount$ == 0">
+        <unset token="zero_week_eligible"></unset>
+      </condition>
+    </done>
+  </search>
+
+  <search id="zero_week_gate">
+    <query>| loadjob savedsearch="jeffrey.morris@wellsfargo.com:wf-ctfc-content:exclusion_bulk_risk_check"
+| stats count as expiring_count
+| where expiring_count=0</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <condition match="$job.resultCount$ &gt; 0">
+        <set token="show_zero_week">1</set>
+      </condition>
+      <condition match="$job.resultCount$ == 0">
+        <unset token="show_zero_week"></unset>
+      </condition>
+    </done>
+  </search>
+Zero-Entry Week Panels (after KPI row, before pending table)
+xml
+  <row depends="$show_zero_week$,$zero_week_eligible$,$show_engineer$">
+    <panel>
+      <html>
+        <div style="padding:12px 18px; background-color:#1a2a1a; border-left:6px solid #53a051; border-radius:4px; overflow:hidden;">
+          <span style="color:#53a051; font-size:1.05em; font-weight:bold;">No entries expiring this week.</span>
+          <span style="color:#cccccc; font-size:0.9em; margin-left:16px;">Use the dropdown below to log this week as having zero entries. This creates a record in the tracker so the decision history shows this week was checked.</span>
+        </div>
+      </html>
+    </panel>
+  </row>
+  <row depends="$show_zero_week$,$zero_week_eligible$,$show_engineer$">
+    <panel>
+      <input type="dropdown" token="zero_week_confirm">
+        <label>Log Zero-Entry Week</label>
+        <choice value="">Select to log</choice>
+        <choice value="go">Confirm</choice>
+        <default></default>
+        <initialValue></initialValue>
+        <change>
+          <condition value="go">
+            <set token="zero_week_fire">1</set>
+            <unset token="zero_week_confirm"></unset>
+            <unset token="form.zero_week_confirm"></unset>
+          </condition>
+          <condition>
+            <unset token="zero_week_fire"></unset>
+          </condition>
+        </change>
+      </input>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$zero_week_fire$">
+      <title>Zero-Entry Week Log Result</title>
+      <table>
+        <search>
+          <query>| makeresults
+| eval ioc_value="N/A",
+       content="No entries expiring this week",
+       determination="No review needed",
+       review_notes="Zero entries in scope for this review period",
+       reviewed_by="$env:user$",
+       review_date=strftime(now(), "%Y-%m-%d"),
+       review_epoch=now(),
+       iso_week=strftime(now(), "%G-W%V"),
+       original_expires="N/A",
+       wf_rule_owner="N/A",
+       traffic_flag="N/A",
+       hit_count_30d="0",
+       hit_count_90d="0",
+       last_seen_display="N/A",
+       jira_ticket="",
+       strat_status="no_review_needed",
+       strat_updated_by="$env:user$",
+       strat_update_date=strftime(now(), "%Y-%m-%d"),
+       strat_notes="Zero entries in scope",
+       fkey=sha256("zero-week|".iso_week."|".tostring(review_epoch))
+| fields ioc_value, content, determination, review_notes, reviewed_by, review_date, review_epoch, iso_week, original_expires, wf_rule_owner, traffic_flag, hit_count_30d, hit_count_90d, last_seen_display, jira_ticket, strat_status, fkey, strat_updated_by, strat_update_date, strat_notes
+| eval _write_gate="$zero_week_fire$"
+| where _write_gate="1"
+| append
+    [| inputlookup exclusion_review_tracker.csv]
+| fields - _*
+| fields ioc_value, content, determination, review_notes, reviewed_by, review_date, review_epoch, iso_week, original_expires, wf_rule_owner, traffic_flag, hit_count_30d, hit_count_90d, last_seen_display, jira_ticket, strat_status, fkey, strat_updated_by, strat_update_date, strat_notes
+| outputlookup exclusion_review_tracker.csv override_if_empty=false
+| where ioc_value="N/A" AND iso_week=strftime(now(), "%G-W%V")
+| eval result="Week " . iso_week . " logged with zero entries"
+| table result</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+          <done>
+            <condition match="$job.resultCount$ &gt; 0">
+              <unset token="zero_week_fire"></unset>
+              <unset token="show_zero_week"></unset>
+              <unset token="zero_week_eligible"></unset>
+              <eval token="refresh_trigger">now()</eval>
+            </condition>
+            <condition match="$job.resultCount$ == 0">
+              <unset token="zero_week_fire"></unset>
+            </condition>
+          </done>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+Untracked Entries Panel (after "Reviewed This Week" table, before Jira write section)
+xml
+  <row depends="$show_engineer$">
+    <panel>
+      <title>Untracked: expiring within 14 days but not in this week's review</title>
+      <table>
+        <search>
+          <query>| inputlookup WF02958.KV.IOC_Whitelist
+| eval expiry_epoch=expiry/1000
+| where expiry_epoch &lt;= relative_time(now(), "+14d@d") AND expiry_epoch &gt;= now()
+| search bit IN (1, "TRUE", "ENABLED")
+| search notes!="*added via automation*"
+| rename value as ioc_value
+| eval days_left=round((expiry_epoch - now()) / 86400, 0),
+       expires=strftime(expiry_epoch, "%Y-%m-%d")
+| fields ioc_value, content, field, expires, days_left
+| join type=left ioc_value, content
+    [| inputlookup exclusion_review_tracker.csv
+     | where iso_week=strftime(now(), "%G-W%V")
+     | dedup ioc_value, content
+     | eval in_tracker=1
+     | fields ioc_value, content, in_tracker]
+| where isnull(in_tracker)
+| sort + days_left
+| fields - in_tracker
+| rename ioc_value AS "IOC Value", content AS "Content", field AS "Field", expires AS "Expires", days_left AS "Days Left"</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+          <refresh>120</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">false</option>
+        <format type="color" field="Days Left">
+          <colorPalette type="minMidMax" maxColor="#53a051" midColor="#f8be34" minColor="#dc4e41"></colorPalette>
+          <scale type="threshold">0,4</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+Decision History Updates
+Replace the existing status_display case line with:
+
+text
+| eval status_display=case(strat_status=="approved", "APPROVED", strat_status=="denied", "DENIED", strat_status=="pending_strat", "AWAITING STRAT", strat_status=="no_review_needed", "NO ENTRIES", 1==1, strat_status)
+Replace the Status colorPalette with:
+
+xml
+<colorPalette type="map">{"APPROVED":"#53a051","DENIED":"#dc4e41","AWAITING STRAT":"#f8be34","NO ENTRIES":"#006d9c"}</colorPalette>
