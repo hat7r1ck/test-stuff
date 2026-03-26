@@ -1,0 +1,17 @@
+let
+    Source = Json.Document(
+        Web.Contents(
+            "https://YOUR-JIRA-URL/rest/api/2/search",
+            [
+                Query = [
+                    jql = "project=CTFCSE AND status in (""To Do"",""In Progress"")",
+                    maxResults = "10"
+                ],
+                Headers = [
+                    Authorization = "Bearer YOUR_PAT_HERE"
+                ]
+            ]
+        )
+    )
+in
+    Source
