@@ -1,1 +1,0 @@
-last_refreshed=strftime(strptime(published, "%Y-%m-%dT%H:%M:%S"), "%Y-%m-%d %H:%M")
